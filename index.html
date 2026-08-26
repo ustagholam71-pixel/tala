@@ -204,42 +204,81 @@
   </main>
   <nav class="bottom-nav" id="bottomNav" style="display:none;"></nav>
 </div>
-<script type="module">
-  // پل اتصال به فایربیس — چون بقیه برنامه از نوع ماژول جاوااسکریپت
-  // نیست، توابع لازم فایربیس را روی window.FB می‌گذاریم تا کد اصلی
-  // بتواند از آن‌ها استفاده کند.
-  // نکته: از Firebase Storage استفاده نمی‌کنیم چون در پلن رایگان
-  // (Spark) بدون کارت بانکی/ارتقا به Blaze در دسترس نیست؛ عکس‌ها
-  // به‌صورت فشرده مستقیم داخل خود سند Firestore ذخیره می‌شوند.
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-  import {
-    getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc,
-    getDocs, getDoc
-  } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+<script>
+  // پل اتصال به Firebase — از طریق Netlify Functions روی همین دامنه.
+  // چون Firebase در ایران فیلتر است، مرورگر کاربر مستقیم بهش وصل
+  // نمی‌شود؛ فقط به آدرس‌های /.netlify/functions/... روی همین سایت
+  // صحبت می‌کند، و سرور Netlify (که فیلتر نیست) با firebase-admin
+  // واقعاً به Firestore وصل می‌شود.
+  (function () {
+    function req(method, url, body) {
+      return fetch(url, {
+        method: method,
+        headers: { "Content-Type": "application/json" },
+        body: body !== undefined ? JSON.stringify(body) : undefined
+      }).then(function (res) {
+        if (!res.ok) return res.json().catch(function () { return {}; }).then(function (j) {
+          throw new Error((j && j.error) || ("http-" + res.status));
+        });
+        return res.status === 204 ? null : res.json();
+      });
+    }
 
-  var firebaseConfig = {
-    apiKey: "AIzaSyD9kk1Em_wHEuD1Q-yfgRdepr9VB8HTPxs",
-    authDomain: "tala-e2982.firebaseapp.com",
-    projectId: "tala-e2982",
-    storageBucket: "tala-e2982.firebasestorage.app",
-    messagingSenderId: "207856832796",
-    appId: "1:207856832796:web:cd4a1ee81ef76f81a4ead9",
-    measurementId: "G-RGPWJ2EKSL"
-  };
+    try {
+      window.FB = {
+        db: null,
+        collection: function (db, name) { return { name: name }; },
+        doc: function (db, name, id) { return { name: name, id: id }; },
 
-  try {
-    var app = initializeApp(firebaseConfig);
-    var db = getFirestore(app);
-    window.FB = {
-      db: db,
-      collection: collection, doc: doc, addDoc: addDoc, setDoc: setDoc,
-      updateDoc: updateDoc, deleteDoc: deleteDoc, getDocs: getDocs, getDoc: getDoc
-    };
-  } catch (e) {
-    // فایربیس بارگذاری نشد (مثلاً اینترنت قطع بود)؛ برنامه با
-    // حالت آفلاین/محلی ادامه می‌دهد.
-    window.FB = null;
-  }
+        getDocs: function (ref) {
+          if (ref.name !== "products") return Promise.reject(new Error("unsupported-collection"));
+          return req("GET", "/.netlify/functions/products").then(function (list) {
+            return {
+              forEach: function (cb) {
+                list.forEach(function (row) {
+                  var copy = Object.assign({}, row);
+                  delete copy.id;
+                  cb({ id: row.id, data: function () { return copy; } });
+                });
+              }
+            };
+          });
+        },
+
+        getDoc: function (ref) {
+          if (ref.name !== "settings" || ref.id !== "site") return Promise.reject(new Error("unsupported-doc"));
+          return req("GET", "/.netlify/functions/site-name").then(function (data) {
+            return { exists: function () { return true; }, data: function () { return data; } };
+          }).catch(function () {
+            return { exists: function () { return false; }, data: function () { return null; } };
+          });
+        },
+
+        setDoc: function (ref, data) {
+          if (ref.name === "products") {
+            var body = Object.assign({}, data, { id: ref.id });
+            return req("POST", "/.netlify/functions/products", body).then(function () { return true; });
+          }
+          if (ref.name === "settings" && ref.id === "site") {
+            return req("POST", "/.netlify/functions/site-name", { siteName: data.siteName }).then(function () { return true; });
+          }
+          return Promise.reject(new Error("unsupported-collection"));
+        },
+
+        updateDoc: function (ref, patch) {
+          if (ref.name !== "products") return Promise.reject(new Error("unsupported-collection"));
+          return req("PATCH", "/.netlify/functions/products", { id: ref.id, patch: patch }).then(function () { return true; });
+        },
+
+        deleteDoc: function (ref) {
+          if (ref.name !== "products") return Promise.reject(new Error("unsupported-collection"));
+          return req("DELETE", "/.netlify/functions/products?id=" + encodeURIComponent(ref.id)).then(function () { return true; });
+        }
+      };
+    } catch (e) {
+      window.FB = null;
+    }
+  })();
 </script>
 <script>
 /* =========================================================
